@@ -2,11 +2,11 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
-const yahooFinance = require("yahoo-finance2").default;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(__dirname));
 
 // Fetch Stock Symbol from Yahoo Finance
 app.get("/api/getStockSymbol/:company", async (req, res) => {
@@ -34,30 +34,56 @@ app.get("/api/getStockData/:symbol", async (req, res) => {
     const stockSymbol = req.params.symbol.toUpperCase();
 
     try {
-        const stockData = await yahooFinance.quoteSummary(stockSymbol, { modules: ["price", "summaryDetail"] });
+        const response = await axios.get(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(stockSymbol)}`,
+            {
+                params: { interval: "1d", range: "1d" },
+                headers: { "User-Agent": "Mozilla/5.0" },
+                timeout: 10000,
+            }
+        );
+        const stockData = response.data?.chart?.result?.[0];
 
-        if (!stockData || !stockData.price) {
+        if (!stockData) {
             return res.status(404).json({ error: "Stock symbol not found" });
         }
 
+        const { meta, indicators } = stockData;
+        const quote = indicators?.quote?.[0] || {};
+        const currentPrice = meta.regularMarketPrice;
+        const previousClose = meta.chartPreviousClose;
+        const change = meta.fulldayChange ?? currentPrice - previousClose;
+        const percentChange = meta.fulldayChangePercent
+            ?? (previousClose ? (change / previousClose) * 100 : 0);
+        const now = Math.floor(Date.now() / 1000);
+        const marketState = ["pre", "regular", "post"].find((state) => {
+            const period = meta.currentTradingPeriod?.[state];
+            return period && now >= period.start && now < period.end;
+        })?.toUpperCase() || "CLOSED";
+
         const stockInfo = {
-            symbol: stockData.price.symbol,
-            name: stockData.price.longName || stockData.price.shortName,
-            price: stockData.price.regularMarketPrice,
-            currency: stockData.price.currency,
-            change: stockData.price.regularMarketChange,
-            percentChange: stockData.price.regularMarketChangePercent,
-            high: stockData.summaryDetail.dayHigh,
-            low: stockData.summaryDetail.dayLow,
-            open: stockData.price.regularMarketOpen,
-            volume: stockData.summaryDetail.volume,
-            marketState: stockData.price.marketState,
+            symbol: meta.symbol,
+            name: meta.longName || meta.shortName || meta.symbol,
+            price: currentPrice,
+            currency: meta.currency,
+            change,
+            percentChange,
+            high: meta.regularMarketDayHigh ?? quote.high?.[0],
+            low: meta.regularMarketDayLow ?? quote.low?.[0],
+            open: quote.open?.[0],
+            volume: meta.regularMarketVolume ?? quote.volume?.[0],
+            marketState,
         };
 
         res.json(stockInfo);
     } catch (error) {
         console.error("Error fetching stock data:", error.message);
-        res.status(500).json({ error: "Failed to fetch stock data" });
+        const isRateLimited = error.response?.status === 429;
+        res.status(isRateLimited ? 503 : 502).json({
+            error: isRateLimited
+                ? "Yahoo Finance is temporarily rate-limiting requests. Please try again later."
+                : "Failed to fetch stock data from Yahoo Finance",
+        });
     }
 });
 
