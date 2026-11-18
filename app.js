@@ -1,20 +1,21 @@
+const API_BASE_URL = (window.STOCK_API_BASE_URL || "").replace(/\/$/, "");
+
 async function fetchStock() {
     const companyName = document.getElementById("stockSymbol").value.trim();
     if (!companyName) return alert("Please enter a stock name!");
 
     try {
-        // Fetch Stock Symbol from Backend Proxy
-        const symbolResponse = await fetch(`http://localhost:5000/api/getStockSymbol/${companyName}`);
+        const symbolResponse = await fetch(`${API_BASE_URL}/api/getStockSymbol/${encodeURIComponent(companyName)}`);
         const symbolData = await symbolResponse.json();
 
-        if (!symbolData.symbol) {
+        if (!symbolResponse.ok || !symbolData.symbol) {
             alert("Stock not found. Please enter a valid stock name.");
             return;
         }
 
-        // Fetch Stock Data from Backend Proxy
-        const stockResponse = await fetch(`http://localhost:5000/api/getStockData/${symbolData.symbol}`);
+        const stockResponse = await fetch(`${API_BASE_URL}/api/getStockData/${encodeURIComponent(symbolData.symbol)}`);
         const stockData = await stockResponse.json();
+        if (!stockResponse.ok) throw new Error(stockData.error || "Failed to fetch stock data");
 
         updateUI(stockData);
     } catch (error) {
@@ -33,7 +34,7 @@ function updateUI(data) {
 
     document.getElementById("marketState").innerText = `Market State: ${data.marketState}`;
     document.getElementById("stockOpen").innerText = `Open: ${data.currency} ${data.open?.toFixed(2) || "N/A"}`;
-    document.getElementById("stockHighLow").innerText = `High: ${data.currency} ${data.high?.toFixed(2) || "N/A"} | Low: ${data.currency} ${data.low?.toFixed(2) || "N/A"}`;
+    document.getElementById("stockHighLow").innerText = `High: ${data.currency} ${data.high?.toFixed(2) || "N/A"} | Low: ${data.low?.toFixed(2) || "N/A"}`;
     document.getElementById("stockVolume").innerText = `Volume: ${data.volume?.toLocaleString() || "N/A"}`;
 }
 

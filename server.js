@@ -4,65 +4,66 @@ const cors = require("cors");
 const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+function createApp({ httpClient = axios, finance = yahooFinance } = {}) {
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
 
-// Fetch Stock Symbol from Yahoo Finance
-app.get("/api/getStockSymbol/:company", async (req, res) => {
-    const companyName = req.params.company;
-
-    try {
-        const response = await axios.get(`https://query2.finance.yahoo.com/v1/finance/search?q=${companyName}`, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-        });
-
-        const data = response.data;
-        if (data.quotes && data.quotes.length > 0) {
-            res.json({ symbol: data.quotes[0].symbol });
-        } else {
-            res.status(404).json({ error: "Stock not found" });
+    app.get("/api/getStockSymbol/:company", async (req, res) => {
+        try {
+            const response = await httpClient.get(
+                `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(req.params.company)}`,
+                { headers: { "User-Agent": "Mozilla/5.0" } },
+            );
+            const quotes = response.data?.quotes;
+            if (quotes?.length) return res.json({ symbol: quotes[0].symbol });
+            return res.status(404).json({ error: "Stock not found" });
+        } catch (error) {
+            console.error("Error fetching stock symbol:", error.message);
+            return res.status(500).json({ error: "Failed to fetch stock symbol" });
         }
-    } catch (error) {
-        console.error("Error fetching stock symbol:", error.message);
-        res.status(500).json({ error: "Failed to fetch stock symbol" });
-    }
-});
+    });
 
-// Fetch Stock Data from Yahoo Finance
-app.get("/api/getStockData/:symbol", async (req, res) => {
-    const stockSymbol = req.params.symbol.toUpperCase();
+    app.get("/api/getStockData/:symbol", async (req, res) => {
+        try {
+            const stockData = await finance.quoteSummary(req.params.symbol.toUpperCase(), {
+                modules: ["price", "summaryDetail"],
+            });
 
-    try {
-        const stockData = await yahooFinance.quoteSummary(stockSymbol, { modules: ["price", "summaryDetail"] });
+            if (!stockData?.price) {
+                return res.status(404).json({ error: "Stock symbol not found" });
+            }
 
-        if (!stockData || !stockData.price) {
-            return res.status(404).json({ error: "Stock symbol not found" });
+            const stockInfo = {
+                symbol: stockData.price.symbol,
+                name: stockData.price.longName || stockData.price.shortName,
+                price: stockData.price.regularMarketPrice,
+                currency: stockData.price.currency,
+                change: stockData.price.regularMarketChange,
+                percentChange: stockData.price.regularMarketChangePercent,
+                high: stockData.summaryDetail?.dayHigh,
+                low: stockData.summaryDetail?.dayLow,
+                open: stockData.price.regularMarketOpen,
+                volume: stockData.summaryDetail?.volume,
+                marketState: stockData.price.marketState,
+            };
+            return res.json(stockInfo);
+        } catch (error) {
+            console.error("Error fetching stock data:", error.message);
+            return res.status(500).json({ error: "Failed to fetch stock data" });
         }
+    });
 
-        const stockInfo = {
-            symbol: stockData.price.symbol,
-            name: stockData.price.longName || stockData.price.shortName,
-            price: stockData.price.regularMarketPrice,
-            currency: stockData.price.currency,
-            change: stockData.price.regularMarketChange,
-            percentChange: stockData.price.regularMarketChangePercent,
-            high: stockData.summaryDetail.dayHigh,
-            low: stockData.summaryDetail.dayLow,
-            open: stockData.price.regularMarketOpen,
-            volume: stockData.summaryDetail.volume,
-            marketState: stockData.price.marketState,
-        };
+    return app;
+}
 
-        res.json(stockInfo);
-    } catch (error) {
-        console.error("Error fetching stock data:", error.message);
-        res.status(500).json({ error: "Failed to fetch stock data" });
-    }
-});
-
-// Start Server
+const app = createApp();
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-});
+
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log(`✅ Server running on port ${PORT}`);
+    });
+}
+
+module.exports = { app, createApp };
